@@ -1,0 +1,139 @@
+import os
+import sqlite3
+import smtplib
+from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, flash
+from email.message import EmailMessage
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key'
+app.config['UPLOAD_FOLDER'] = 'uploads'
+
+# Email Settings
+EMAIL_ADDRESS = 'your_email@gmail.com'
+EMAIL_PASSWORD = 'your_app_password'  # ใช้ App Password (Gmail)
+
+def send_email(to_email, subject, body):
+    msg = EmailMessage()
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.set_content(body)
+
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        smtp.send_message(msg)
+
+def init_db():
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT,
+        filename TEXT,
+        status TEXT DEFAULT 'รอตรวจ',
+        comment TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS admins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        password TEXT
+    )''')
+    c.execute("INSERT OR IGNORE INTO admins (id, username, password) VALUES (1, 'admin', 'admin123')")
+    conn.commit()
+    conn.close()
+
+init_db()
+
+@app.route('/', methods=['GET', 'POST'])
+def upload():
+    if request.method == 'POST':
+        name = request.form['name']
+        email = request.form['email']
+        file = request.files['file']
+        if file:
+            filename = file.filename
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+
+            conn = sqlite3.connect('database.db')
+            c = conn.cursor()
+            c.execute("INSERT INTO documents (name, email, filename) VALUES (?, ?, ?)",
+                      (name, email, filename))
+            conn.commit()
+            conn.close()
+            flash('ส่งเอกสารเรียบร้อยแล้ว!', 'success')
+    return render_template('upload.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM admins WHERE username=? AND password=?", (username, password))
+        admin = c.fetchone()
+        conn.close()
+        if admin:
+            session['admin'] = True
+            return redirect('/admin')
+        else:
+            flash('เข้าสู่ระบบไม่สำเร็จ', 'danger')
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('admin', None)
+    return redirect('/login')
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    if not session.get('admin'):
+        return redirect('/login')
+
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+
+    if request.method == 'POST':
+        doc_id = request.form['doc_id']
+        status = request.form['status']
+        comment = request.form['comment']
+        c.execute("UPDATE documents SET status=?, comment=? WHERE id=?", (status, comment, doc_id))
+        conn.commit()
+
+        # ส่งอีเมลแจ้งผู้ใช้
+        c.execute("SELECT email, filename FROM documents WHERE id=?", (doc_id,))
+        doc = c.fetchone()
+        if doc:
+            to_email = doc[0]
+            filename = doc[1]
+            subject = "แจ้งผลการตรวจเอกสาร"
+            body = f"ไฟล์: {filename}\nสถานะ: {status}\nหมายเหตุ: {comment}"
+            send_email(to_email, subject, body)
+
+    c.execute("SELECT * FROM documents")
+    docs = c.fetchall()
+    conn.close()
+    return render_template('admin.html', documents=docs)
+
+@app.route('/status', methods=['GET', 'POST'])
+def status():
+    results = []
+    if request.method == 'POST':
+        name = request.form['name']
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM documents WHERE name=?", (name,))
+        results = c.fetchall()
+        conn.close()
+    return render_template('status.html', documents=results)
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+if __name__ == '__main__':
+    if not os.path.exists('uploads'):
+        os.makedirs('uploads')
+    app.run(debug=True)
