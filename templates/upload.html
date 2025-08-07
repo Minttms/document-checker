@@ -2,12 +2,16 @@
 <!DOCTYPE html>
 <html>
 <head>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- ใส่ CSS หรือ Bootstrap ต่อจากนี้ -->
     <title>ส่งเอกสารตรวจสอบ</title>
 </head>
 <body>
     <h2>ส่งเอกสาร</h2>
     <form action="/" method="post" enctype="multipart/form-data">
         ชื่อ: <input type="text" name="name" required><br><br>
+        องค์กร:<input type="text" name="organization" required><br><br>
         อีเมล: <input type="email" name="email" required><br><br>
         เอกสาร: <input type="file" name="file" accept=".pdf,.docx" required><br><br>
         <button type="submit">ส่งเอกสาร</button>
