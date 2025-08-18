@@ -29,6 +29,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS documents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
+        organization TEXT,
         email TEXT,
         filename TEXT,
         status TEXT DEFAULT 'รอตรวจ',
@@ -49,6 +50,7 @@ init_db()
 def upload():
     if request.method == 'POST':
         name = request.form['name']
+        organization = request.form['organization']
         email = request.form['email']
         file = request.files['file']
         if file:
@@ -58,8 +60,8 @@ def upload():
 
             conn = sqlite3.connect('database.db')
             c = conn.cursor()
-            c.execute("INSERT INTO documents (name, email, filename) VALUES (?, ?, ?)",
-                      (name, email, filename))
+            c.execute("INSERT INTO documents (name, organization, email, filename) VALUES (?, ?, ?, ?)",
+                      (name, organization, email, filename))
             conn.commit()
             conn.close()
             flash('ส่งเอกสารเรียบร้อยแล้ว!', 'success')
@@ -137,3 +139,4 @@ if __name__ == '__main__':
     if not os.path.exists('uploads'):
         os.makedirs('uploads')
     app.run(debug=True)
+    
