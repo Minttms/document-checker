@@ -1,28 +1,23 @@
 import os
 import sqlite3
-import smtplib
+import time
+from flask_mail import Mail, Message
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, flash
-from email.message import EmailMessage
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
-# Email Settings
-EMAIL_ADDRESS = 'your_email@gmail.com'
-EMAIL_PASSWORD = 'your_app_password'  # ใช้ App Password (Gmail)
+# ตั้งค่า Flask-Mail
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = "your_email@gmail.com"   # ใส่อีเมลผู้ส่ง
+app.config['MAIL_PASSWORD'] = "your_app_password"      # ใส่ App Password
+mail = Mail(app)
 
-def send_email(to_email, subject, body):
-    msg = EmailMessage()
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = to_email
-    msg['Subject'] = subject
-    msg.set_content(body)
-
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        smtp.send_message(msg)
-
+# ฟังก์ชันสร้างฐานข้อมูล
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -46,6 +41,7 @@ def init_db():
 
 init_db()
 
+# ----------- หน้าอัปโหลดเอกสาร -----------
 @app.route('/', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
@@ -53,20 +49,44 @@ def upload():
         organization = request.form['organization']
         email = request.form['email']
         file = request.files['file']
-        if file:
-            filename = file.filename
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
 
-            conn = sqlite3.connect('database.db')
-            c = conn.cursor()
-            c.execute("INSERT INTO documents (name, organization, email, filename) VALUES (?, ?, ?, ?)",
-                      (name, organization, email, filename))
-            conn.commit()
-            conn.close()
-            flash('ส่งเอกสารเรียบร้อยแล้ว!', 'success')
+        if not file or file.filename == '':
+            flash('ไม่ได้เลือกไฟล์', 'danger')
+            return redirect(request.url)
+
+        # ใช้ secure filename และเพิ่ม timestamp
+        filename = secure_filename(file.filename)
+        filename = f"{int(time.time())}_{filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        file.save(filepath)
+
+        # บันทึกลงฐานข้อมูล
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO documents (name, organization, email, filename) VALUES (?, ?, ?, ?)",
+                  (name, organization, email, filename))
+        conn.commit()
+        conn.close()
+
+        # ส่งอีเมลแจ้งผู้ตรวจสอบ
+        try:
+            msg = Message("📄 เอกสารใหม่จากนิสิต",
+                          sender=app.config['MAIL_USERNAME'],
+                          recipients=["sirinthipmint@gmail.com"])  # อีเมลผู้ตรวจสอบ
+            msg.body = f"มีเอกสารใหม่จากนิสิต: {filename}"
+            with app.open_resource(filepath) as fp:
+                msg.attach(filename, "application/octet-stream", fp.read())
+            mail.send(msg)
+            flash('ส่งเอกสารเรียบร้อยแล้ว และแจ้งผู้ตรวจสอบแล้ว!', 'success')
+        except Exception as e:
+            flash(f'ส่งอีเมลไม่สำเร็จ: {e}', 'danger')
+
+        return redirect(request.url)
+
     return render_template('upload.html')
 
+# ----------- หน้าเข้าสู่ระบบ admin -----------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -78,7 +98,7 @@ def login():
         admin = c.fetchone()
         conn.close()
         if admin:
-            session['admin'] = True
+            session['admin'] = username
             return redirect('/admin')
         else:
             flash('เข้าสู่ระบบไม่สำเร็จ', 'danger')
@@ -89,6 +109,7 @@ def logout():
     session.pop('admin', None)
     return redirect('/login')
 
+# ----------- หน้า admin ตรวจเอกสาร -----------
 @app.route('/admin', methods=['GET', 'POST'])
 def admin():
     if not session.get('admin'):
@@ -112,13 +133,19 @@ def admin():
             filename = doc[1]
             subject = "แจ้งผลการตรวจเอกสาร"
             body = f"ไฟล์: {filename}\nสถานะ: {status}\nหมายเหตุ: {comment}"
-            send_email(to_email, subject, body)
+            try:
+                msg = Message(subject, sender=app.config['MAIL_USERNAME'], recipients=[to_email])
+                msg.body = body
+                mail.send(msg)
+            except Exception as e:
+                flash(f'ส่งอีเมลไม่สำเร็จ: {e}', 'danger')
 
     c.execute("SELECT * FROM documents")
     docs = c.fetchall()
     conn.close()
     return render_template('admin.html', documents=docs)
 
+# ----------- ตรวจสอบสถานะเอกสาร -----------
 @app.route('/status', methods=['GET', 'POST'])
 def status():
     results = []
@@ -131,12 +158,12 @@ def status():
         conn.close()
     return render_template('status.html', documents=results)
 
+# ----------- ดาวน์โหลดไฟล์ -----------
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+# ----------- รันแอป -----------
 if __name__ == '__main__':
-    if not os.path.exists('uploads'):
-        os.makedirs('uploads')
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     app.run(debug=True)
-    
