@@ -73,7 +73,7 @@ def upload():
         try:
             msg = Message("📄 เอกสารใหม่จากนิสิต",
                           sender=app.config['MAIL_USERNAME'],
-                          recipients=["sirinthipmint@gmail.com"])  # อีเมลผู้ตรวจสอบ
+                          recipients=["salarakmint@gmail.com"])  # อีเมลผู้ตรวจสอบ
             msg.body = f"มีเอกสารใหม่จากนิสิต: {filename}"
             with app.open_resource(filepath) as fp:
                 msg.attach(filename, "application/octet-stream", fp.read())
